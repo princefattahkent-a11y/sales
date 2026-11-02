@@ -115,7 +115,7 @@ button { color: inherit; }
 .cashier-avatar { width: 23px; height: 23px; font-size: 9px; }
 .history-actions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .history-actions .button { width: 30px; min-height: 30px; padding: 0; }
-.summary-dialog { width: min(540px, calc(100vw - 28px)); max-height: min(760px, calc(100vh - 32px)); padding: 0; overflow: auto; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 24px 80px #10261940; }
+.summary-dialog { position: fixed; inset: 0; width: min(540px, calc(100vw - 28px)); max-height: min(760px, calc(100vh - 32px)); margin: auto; padding: 0; overflow: auto; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 24px 80px #10261940; }
 .summary-dialog::backdrop { background: #13221980; backdrop-filter: blur(2px); }
 .summary-dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 23px 24px 19px; border-bottom: 1px solid var(--line); }
 .summary-dialog-header h2 { margin: 6px 0 5px; font-size: 21px; font-weight: 660; letter-spacing: -.035em; }
