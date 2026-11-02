@@ -1,0 +1,8 @@
+{
+  "name": "Sunday Close · Sales Summary",
+  "description": "Record and review Sunday sales summaries.",
+  "request_frame_permissions": [],
+  "prompt_capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
