@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
+import { toast } from 'sonner'
 import {
-  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert,
+  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert, Download,
   CircleHelp, ClipboardList, History, House, LoaderCircle, LogOut, RefreshCw,
   Save, Settings, ShieldCheck,
 } from 'lucide-react'
@@ -62,18 +63,14 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return
     setPending(true)
-    setError('')
-    setMessage('')
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     setPending(false)
-    if (signInError) setError(signInError.message.includes('Invalid login') ? 'Email or password is incorrect.' : signInError.message)
+    if (signInError) toast.error(signInError.message.includes('Invalid login') ? 'Email or password is incorrect.' : signInError.message)
     else if (data.session) onSignedIn(data.session)
   }
 
@@ -81,32 +78,28 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
     event.preventDefault()
     if (!supabase) return
     setPending(true)
-    setError('')
-    setMessage('')
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
       options: { data: { full_name: name.trim() }, emailRedirectTo: window.location.origin },
     })
     setPending(false)
-    if (signUpError) setError(signUpError.message)
+    if (signUpError) toast.error(signUpError.message)
     else if (data.session) onSignedIn(data.session)
-    else setMessage('Check your email to confirm your account. After confirmation, an admin can approve your request.')
+    else toast.success('Check your email to confirm your account. Then an admin can approve your request.', { duration: 6000 })
   }
 
   async function sendSignInLink() {
     if (!supabase) return
-    if (!email.trim()) { setError('Enter your email first.'); return }
+    if (!email.trim()) { toast.error('Enter your email first.'); return }
     setPending(true)
-    setError('')
-    setMessage('')
     const { error: linkError } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { shouldCreateUser: false, emailRedirectTo: window.location.origin },
     })
     setPending(false)
-    if (linkError) setError(linkError.message)
-    else setMessage('If that email belongs to an account, a sign-in link is on its way.')
+    if (linkError) toast.error(linkError.message)
+    else toast.success('If that email belongs to an account, a sign-in link is on its way.')
   }
 
   return (
@@ -119,12 +112,10 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
             {mode === 'signup' && <div className="field"><Label htmlFor="full-name">Full name</Label><Input id="full-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required /></div>}
             <div className="field"><Label htmlFor="email">Email</Label><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
             <div className="field"><Label htmlFor="password">Password</Label><Input id="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
-            {error && <ErrorNotice>{error}</ErrorNotice>}
-            {message && <div className="notice notice-success" role="status">{message}</div>}
             <Button type="submit" disabled={pending}>{pending ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}{mode === 'signup' ? 'Create account' : 'Sign in'}</Button>
             {mode === 'signin' && <Button type="button" variant="outline" disabled={pending} onClick={sendSignInLink}>{pending ? <LoaderCircle className="spin" size={16} /> : null}Email a sign-in link</Button>}
           </form>
-          <p className="auth-switch">{mode === 'signup' ? 'Already have an account?' : 'New cashier?'} <button type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setError(''); setMessage('') }}>{mode === 'signup' ? 'Sign in' : 'Create an account'}</button></p>
+          <p className="auth-switch">{mode === 'signup' ? 'Already have an account?' : 'New cashier?'} <button type="button" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Sign in' : 'Create an account'}</button></p>
           <p className="signin-foot">New accounts must confirm their email and wait for admin approval before accessing sales.</p>
         </CardContent>
       </Card>
@@ -190,8 +181,6 @@ function App() {
   const [requestsLoading, setRequestsLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [reviewingId, setReviewingId] = useState('')
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
 
   async function refreshRequests() {
     if (!supabase || profile?.role !== 'admin') return
@@ -201,7 +190,7 @@ function App() {
       .eq('approval_status', 'pending')
       .not('email_confirmed_at', 'is', null)
       .order('requested_at', { ascending: true })
-    if (requestError) setError(`Could not load signup requests. ${requestError.message}`)
+    if (requestError) toast.error(`Could not load signup requests. ${requestError.message}`)
     else setRequests(data || [])
     setRequestsLoading(false)
   }
@@ -235,7 +224,7 @@ function App() {
       setProfile(data)
       setNameDraft(data?.display_name || '')
       setProfileLoadedFor(userId)
-      if (profileError) setError(`Could not load your account status. ${profileError.message}`)
+      if (profileError) toast.error(`Could not load your account status. ${profileError.message}`)
     })
     return () => { active = false }
   }, [session?.user.id])
@@ -253,7 +242,7 @@ function App() {
       .order('sunday_date', { ascending: false })
       .then(({ data, error: loadError }) => {
         if (!active) return
-        if (loadError) setError(`Could not load saved summaries. ${loadError.message}`)
+        if (loadError) toast.error(`Could not load saved summaries. ${loadError.message}`)
         else setSummaries((data || []) as SalesSummary[])
         setHistoryLoading(false)
       })
@@ -278,8 +267,6 @@ function App() {
       expenses: String(selectedSummary.expenses),
       cash_deposited: String(selectedSummary.cash_deposited),
     } : emptyForm)
-    setError('')
-    setNotice('')
   }, [selectedSummary, selectedDate])
 
   const ids = amountOrZero(form.ids_printed)
@@ -288,13 +275,13 @@ function App() {
   const expenses = amountOrZero(form.expenses)
   const deposited = amountOrZero(form.cash_deposited)
   const worked = mtn + airtel + deposited
-  const cashAtHand = deposited - expenses
+  const rawCashAtHand = deposited - expenses
+  const cashAtHand = Math.max(0, rawCashAtHand)
+  const cashShortfall = Math.max(0, expenses - deposited)
   const validSunday = isSunday(selectedDate)
 
   function setValue(key: keyof FormValues, value: string) {
     setForm((current) => ({ ...current, [key]: value }))
-    setError('')
-    setNotice('')
   }
 
   function navigate(nextView: View) {
@@ -312,10 +299,8 @@ function App() {
   async function saveSummary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || !session) return
-    if (!validSunday) { setError('Choose a Sunday to save this summary.'); return }
+    if (!validSunday) { toast.error('Choose a Sunday to save this summary.'); return }
     setSaving(true)
-    setError('')
-    setNotice('')
     const draft: SalesDraft = {
       sunday_date: selectedDate,
       ids_printed: Math.floor(ids),
@@ -330,24 +315,57 @@ function App() {
       .single()
     setSaving(false)
     if (saveError) {
-      setError(saveError.message.includes('sales_summaries') ? 'Could not save the summary. Check that the Supabase setup SQL has been applied.' : saveError.message)
+      toast.error(saveError.message.includes('sales_summaries') ? 'Could not save the summary. Check that the Supabase setup SQL has been applied.' : saveError.message)
       return
     }
     setSummaries((current) => [data as SalesSummary, ...current.filter((item) => item.sunday_date !== selectedDate)].sort((a, b) => b.sunday_date.localeCompare(a.sunday_date)))
-    setNotice(`Summary for ${formatSunday(selectedDate)} saved.`)
+    toast.success(`Summary for ${formatSunday(selectedDate)} saved.`)
+  }
+
+  function downloadCurrentPdf() {
+    if (!validSunday) { toast.error('Choose a Sunday before downloading the PDF.'); return }
+    void exportPdf({
+      sunday_date: selectedDate,
+      ids_printed: Math.floor(ids),
+      mtn_amount: mtn,
+      airtel_amount: airtel,
+      expenses,
+      cash_deposited: deposited,
+    }, selectedSummary?.recorder?.display_name || selectedSummary?.recorder?.email || currentUserName)
+  }
+
+  function downloadSavedPdf(summary: SalesSummary) {
+    void exportPdf({
+      sunday_date: summary.sunday_date,
+      ids_printed: summary.ids_printed,
+      mtn_amount: summary.mtn_amount,
+      airtel_amount: summary.airtel_amount,
+      expenses: summary.expenses,
+      cash_deposited: summary.cash_deposited,
+    }, summary.recorder?.display_name || summary.recorder?.email || 'Team cashier')
+  }
+
+  async function exportPdf(draft: SalesDraft, cashier: string) {
+    try {
+      const { downloadSalesSummaryPdf } = await import('./lib/sales-pdf')
+      downloadSalesSummaryPdf(draft, cashier)
+      toast.success('Sunday sales PDF downloaded.')
+    } catch {
+      toast.error('Could not create the PDF. Please try again.')
+    }
   }
 
   async function signOut() {
     if (!supabase) return
     const { error: signOutError } = await supabase.auth.signOut()
-    if (signOutError) setError(signOutError.message)
+    if (signOutError) toast.error(signOutError.message)
   }
 
   async function checkApprovalStatus() {
     if (!supabase || !session) return
     setProfileLoadedFor('')
     const { data, error: profileError } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()
-    if (profileError) setError(`Could not check approval status. ${profileError.message}`)
+    if (profileError) toast.error(`Could not check approval status. ${profileError.message}`)
     else {
       setProfile(data)
       setNameDraft(data?.display_name || '')
@@ -358,38 +376,35 @@ function App() {
   async function reviewRequest(userId: string, decision: 'approved' | 'rejected') {
     if (!supabase) return
     setReviewingId(userId)
-    setError('')
     const { error: reviewError } = await supabase.rpc('review_cashier_request', { target_user_id: userId, decision })
     setReviewingId('')
     if (reviewError) {
-      setError(`Could not update this request. ${reviewError.message}`)
+      toast.error(`Could not update this request. ${reviewError.message}`)
       return
     }
     setRequests((current) => current.filter((request) => request.id !== userId))
-    setNotice(decision === 'approved' ? 'Cashier approved. They can now access sales.' : 'Signup request declined.')
+    toast.success(decision === 'approved' ? 'Cashier approved. They can now access sales.' : 'Signup request declined.')
   }
 
   async function saveProfileName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || !session || !profile) return
     const trimmedName = nameDraft.trim()
-    if (!trimmedName) { setError('Enter a name before saving.'); return }
+    if (!trimmedName) { toast.error('Enter a name before saving.'); return }
     setSaving(true)
-    setError('')
-    setNotice('')
     const { error: updateError } = await supabase.auth.updateUser({ data: { full_name: trimmedName } })
     if (updateError) {
       setSaving(false)
-      setError(`Could not update your name. ${updateError.message}`)
+      toast.error(`Could not update your name. ${updateError.message}`)
       return
     }
     const { data, error: profileError } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setSaving(false)
-    if (profileError) setError(`Your name was updated, but the profile could not refresh. ${profileError.message}`)
+    if (profileError) toast.error(`Your name was updated, but the profile could not refresh. ${profileError.message}`)
     else {
       setProfile(data)
       setNameDraft(data.display_name || '')
-      setNotice('Profile name updated.')
+      toast.success('Profile name updated.')
     }
   }
 
@@ -397,14 +412,14 @@ function App() {
   if (!authReady) return <main className="loading-screen"><LoaderCircle className="spin" size={20} /><span>Connecting securely…</span></main>
   if (!session) return <SignIn onSignedIn={setSession} />
   if (profileLoadedFor !== session.user.id) return <main className="loading-screen"><LoaderCircle className="spin" size={20} /><span>Checking account approval…</span></main>
-  if (!profile) return <main className="setup-shell"><div className="brand"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></div><Card className="approval-state-card"><ErrorNotice>{error || 'Your account profile is not ready yet. Contact the app administrator.'}</ErrorNotice><Button variant="ghost" onClick={signOut}><LogOut size={15} />Sign out</Button></Card></main>
+  if (!profile) return <main className="setup-shell"><div className="brand"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></div><Card className="approval-state-card"><ErrorNotice>Your account profile is not ready yet. Contact the app administrator.</ErrorNotice><Button variant="ghost" onClick={signOut}><LogOut size={15} />Sign out</Button></Card></main>
   if (profile.approval_status !== 'approved') return <AwaitingApproval profile={profile} onCheck={checkApprovalStatus} onSignOut={signOut} checking={profileLoadedFor !== session.user.id} />
 
   const currentUserName = profile.display_name || displayName(session.user)
-  const pages: { id: View; label: string; icon: typeof House; count?: number }[] = [
+  const pages: { id: View; label: string; icon: typeof House }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: House },
-    { id: 'history', label: 'History', icon: History, count: summaries.length },
-    { id: 'settings', label: 'Settings', icon: Settings, count: profile.role === 'admin' ? requests.length : undefined },
+    { id: 'history', label: 'History', icon: History },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ]
   const pageInfo = {
     dashboard: { eyebrow: 'Weekly close', title: 'Sunday sales', description: 'Record this Sunday’s figures and review the closing balance.' },
@@ -418,9 +433,6 @@ function App() {
           <a className="brand" href="#main" aria-label="Sunday Close home"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></a>
           <div className="account"><span className="user-avatar" aria-hidden="true">{currentUserName.slice(0, 1).toUpperCase()}</span><span className="account-name">{currentUserName}</span></div>
         </header>
-
-        {error && <div className="global-message"><ErrorNotice>{error}</ErrorNotice><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
-        {notice && <div className="global-message"><div className="notice notice-success" role="status"><BadgeCheck size={16} />{notice}</div><button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
 
         <AnimatePresence mode="wait" initial={false} custom={direction}>
           <motion.section
@@ -461,13 +473,12 @@ function App() {
                 </Card>
 
                 <Card className="summary-card" aria-live="polite">
-                  <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><Badge className="badge-live">LIVE</Badge></CardHeader>
+                    <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><div className="summary-header-actions"><Badge className="badge-live">LIVE</Badge><Button variant="outline" size="sm" onClick={downloadCurrentPdf} disabled={!validSunday}><Download size={14} />Download PDF</Button></div></CardHeader>
                   <CardContent>
                     <div className="metric-label">Total amount worked</div><div className="worked-total">{formatMoney(worked)}</div><div className="metric-support">{formatMoney(mtn)} mobile money <span>·</span> {formatMoney(deposited)} cash</div>
                     <div className="summary-divider" />
-                    <div className="balance-row"><div><div className="metric-label">Cash at hand</div><div className={cashAtHand < 0 ? 'balance-status status-warning' : 'balance-status'}><span className="status-dot" />{cashAtHand < 0 ? 'Expenses exceed cash deposited' : 'After expenses'}</div></div><div className={cashAtHand < 0 ? 'balance-value negative' : 'balance-value'}>{formatMoney(cashAtHand)}</div></div>
+                    <div className="balance-row"><div><div className="metric-label">Cash at hand</div><div className={rawCashAtHand < 0 ? 'balance-status status-warning' : 'balance-status'}><span className="status-dot" />{rawCashAtHand < 0 ? `Expenses exceed cash by ${formatMoney(cashShortfall)}` : 'After expenses'}</div></div><div className="balance-value">{formatMoney(cashAtHand)}</div></div>
                     <div className="breakdown"><h3>Money received</h3><div className="breakdown-row"><span>MTN Mobile Money</span><strong>{formatMoney(mtn)}</strong></div><div className="breakdown-row"><span>Airtel Money</span><strong>{formatMoney(airtel)}</strong></div><div className="breakdown-row"><span>Cash deposited</span><strong>{formatMoney(deposited)}</strong></div><div className="breakdown-row deduction"><span>Expenses</span><strong>− {formatMoney(expenses)}</strong></div></div>
-                    <div className="formula">Total worked = MTN + Airtel + cash deposited<br />Cash at hand = cash deposited − expenses</div>
                     <div className="recorded-by"><span className="recorded-avatar">{(selectedSummary?.recorder?.display_name || selectedSummary?.recorder?.email || currentUserName).slice(0, 1).toUpperCase()}</span><span>{selectedSummary ? <>Recorded by <strong>{selectedSummary.recorder?.display_name || selectedSummary.recorder?.email || 'Team cashier'}</strong></> : <>Will be recorded by <strong>{currentUserName}</strong></>}</span></div>
                   </CardContent>
                 </Card>
@@ -477,14 +488,14 @@ function App() {
                 <CardHeader className="history-header"><div><CardTitle>Past Sundays</CardTitle><p>Saved sales summaries, newest first.</p></div><span className="history-total">{summaries.length} {summaries.length === 1 ? 'record' : 'records'}</span></CardHeader>
                 {historyLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading summaries…</div> : summaries.length === 0 ? <div className="empty-state"><div className="empty-icon"><ClipboardList size={21} /></div><h3>No summaries saved yet</h3><p>Save a Sunday’s sales figures and they’ll appear here.</p><Button variant="outline" onClick={() => navigate('dashboard')}>Record sales</Button></div> : (
                   <div className="history-list">
-                    <div className="history-grid history-labels"><span>Sunday</span><span>IDs</span><span>Total worked</span><span>Cash at hand</span><span>Recorded by</span><span /></div>
+                    <div className="history-grid history-labels"><span>Sunday</span><span>IDs</span><span>Total worked</span><span>Cash at hand</span><span>Recorded by</span><span>Actions</span></div>
                     {summaries.map((summary) => {
                       const total = summary.mtn_amount + summary.airtel_amount + summary.cash_deposited
-                      const balance = summary.cash_deposited - summary.expenses
+                      const balance = Math.max(0, summary.cash_deposited - summary.expenses)
                       const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
-                      return <button className="history-grid history-item" key={summary.sunday_date} onClick={() => loadSummary(summary)} aria-label={`Open ${formatSunday(summary.sunday_date)} summary, recorded by ${cashier}`}>
-                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong className={balance < 0 ? 'negative' : ''}>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><ArrowRight className="history-arrow" size={16} />
-                      </button>
+                      return <div className="history-grid history-item" key={summary.sunday_date}>
+                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><span className="history-actions"><Button variant="ghost" size="sm" onClick={() => loadSummary(summary)} aria-label={`Open ${formatSunday(summary.sunday_date)} summary`}>Open</Button><Button variant="outline" size="sm" onClick={() => downloadSavedPdf(summary)} aria-label={`Download ${formatSunday(summary.sunday_date)} PDF`}><Download size={14} />PDF</Button></span>
+                      </div>
                     })}
                   </div>
                 )}
@@ -524,11 +535,11 @@ function App() {
         <nav className="floating-nav" aria-label="Main navigation">
           {pages.map((page) => {
             const Icon = page.icon
-            return <button key={page.id} className={view === page.id ? 'floating-nav-item active' : 'floating-nav-item'} onClick={() => navigate(page.id)} aria-current={view === page.id ? 'page' : undefined}>
+            const pendingApprovalCount = page.id === 'settings' && profile.role === 'admin' ? requests.length : 0
+            return <button key={page.id} className={view === page.id ? 'floating-nav-item active' : 'floating-nav-item'} onClick={() => navigate(page.id)} aria-label={pendingApprovalCount > 0 ? `Settings, ${pendingApprovalCount} pending approvals` : page.label} title={page.label} aria-current={view === page.id ? 'page' : undefined}>
               {view === page.id && <motion.span className="floating-nav-bubble" layoutId="floating-nav-bubble" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
               <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-              <span>{page.label}</span>
-              {page.count !== undefined && page.count > 0 && <span className="nav-count">{page.count > 99 ? '99+' : page.count}</span>}
+              {pendingApprovalCount > 0 && <span className="nav-notice-dot" aria-hidden="true" />}
             </button>
           })}
         </nav>
