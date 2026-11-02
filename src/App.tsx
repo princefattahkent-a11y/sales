@@ -1,9 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { toast } from 'sonner'
 import {
-  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert, Download, Pencil, Trash2,
+  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert, Download, Eye, Pencil, Trash2, X,
   CircleHelp, ClipboardList, History, House, LoaderCircle, LogOut, RefreshCw,
   Save, Settings, ShieldCheck,
 } from 'lucide-react'
@@ -156,6 +156,62 @@ function AwaitingApproval({
   )
 }
 
+function SummaryViewDialog({
+  summary,
+  onClose,
+  onEdit,
+  onDownload,
+}: {
+  summary: SalesSummary
+  onClose: () => void
+  onEdit: () => void
+  onDownload: () => void
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const worked = summary.mtn_amount + summary.airtel_amount + summary.cash_deposited
+  const cashAtHand = Math.max(0, summary.cash_deposited - summary.expenses)
+  const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (dialog && !dialog.open) dialog.showModal()
+    return () => { if (dialog?.open) dialog.close() }
+  }, [])
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="summary-dialog"
+      aria-labelledby="summary-dialog-title"
+      onCancel={(event) => { event.preventDefault(); onClose() }}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <header className="summary-dialog-header">
+        <div><div className="eyebrow">Sunday sales record</div><h2 id="summary-dialog-title">{formatSunday(summary.sunday_date)}</h2><p>Recorded by <strong>{cashier}</strong></p></div>
+        <button className="dialog-close" type="button" onClick={onClose} aria-label="Close summary"><X size={18} /></button>
+      </header>
+      <div className="summary-dialog-body">
+        <div className="dialog-metrics">
+          <div className="dialog-metric worked"><span>Total amount worked</span><strong>{formatMoney(worked)}</strong></div>
+          <div className="dialog-metric"><span>Cash at hand</span><strong>{formatMoney(cashAtHand)}</strong></div>
+        </div>
+        <div className="dialog-details-heading">Summary details</div>
+        <dl className="dialog-details">
+          <div><dt>IDs printed</dt><dd>{summary.ids_printed.toLocaleString('en-UG')}</dd></div>
+          <div><dt>MTN Mobile Money</dt><dd>{formatMoney(summary.mtn_amount)}</dd></div>
+          <div><dt>Airtel Money</dt><dd>{formatMoney(summary.airtel_amount)}</dd></div>
+          <div><dt>Cash deposited</dt><dd>{formatMoney(summary.cash_deposited)}</dd></div>
+          <div><dt>Total expenses</dt><dd>{formatMoney(summary.expenses)}</dd></div>
+        </dl>
+      </div>
+      <footer className="summary-dialog-actions">
+        <Button variant="outline" onClick={onDownload}><Download size={15} />Download PDF</Button>
+        <Button onClick={onEdit}><Pencil size={15} />Edit summary</Button>
+      </footer>
+    </dialog>
+  )
+}
+
 function MoneyField({ id, label, value, onChange }: { id: string; label: string; value: string; onChange: (value: string) => void }) {
   return (
     <div className="field">
@@ -177,6 +233,7 @@ function App() {
   const [editingDate, setEditingDate] = useState<string | null>(null)
   const [form, setForm] = useState<FormValues>(emptyForm)
   const [summaries, setSummaries] = useState<SalesSummary[]>([])
+  const [viewingSummary, setViewingSummary] = useState<SalesSummary | null>(null)
   const [requests, setRequests] = useState<TeamProfile[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [requestsLoading, setRequestsLoading] = useState(false)
@@ -371,13 +428,13 @@ function App() {
       airtel_amount: summary.airtel_amount,
       expenses: summary.expenses,
       cash_deposited: summary.cash_deposited,
-    }, summary.recorder?.display_name || summary.recorder?.email || 'Team cashier')
+    }, summary.recorder?.display_name || summary.recorder?.email || 'Team cashier', true)
   }
 
-  async function exportPdf(draft: SalesDraft, cashier: string) {
+  async function exportPdf(draft: SalesDraft, cashier: string, isSaved = false) {
     try {
       const { downloadSalesSummaryPdf } = await import('./lib/sales-pdf')
-      downloadSalesSummaryPdf(draft, cashier)
+      downloadSalesSummaryPdf(draft, cashier, isSaved)
       toast.success('Sunday sales PDF downloaded.')
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -525,7 +582,7 @@ function App() {
                       const balance = Math.max(0, summary.cash_deposited - summary.expenses)
                       const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
                       return <div className="history-grid history-item" key={summary.sunday_date}>
-                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><span className="history-actions"><Button variant="ghost" size="sm" onClick={() => editSummary(summary)} aria-label={`Edit ${formatSunday(summary.sunday_date)} summary`} title="Edit"><Pencil size={14} /></Button><Button variant="outline" size="sm" onClick={() => downloadSavedPdf(summary)} aria-label={`Download ${formatSunday(summary.sunday_date)} PDF`} title="Download PDF"><Download size={14} /></Button><Button variant="ghost" size="sm" className="delete-action" onClick={() => deleteSummary(summary)} aria-label={`Delete ${formatSunday(summary.sunday_date)} summary`} title="Delete"><Trash2 size={14} /></Button></span>
+                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><span className="history-actions"><Button variant="ghost" size="sm" onClick={() => setViewingSummary(summary)} aria-label={`View ${formatSunday(summary.sunday_date)} summary`} title="View"><Eye size={14} /></Button><Button variant="ghost" size="sm" onClick={() => editSummary(summary)} aria-label={`Edit ${formatSunday(summary.sunday_date)} summary`} title="Edit"><Pencil size={14} /></Button><Button variant="outline" size="sm" onClick={() => downloadSavedPdf(summary)} aria-label={`Download ${formatSunday(summary.sunday_date)} PDF`} title="Download PDF"><Download size={14} /></Button><Button variant="ghost" size="sm" className="delete-action" onClick={() => deleteSummary(summary)} aria-label={`Delete ${formatSunday(summary.sunday_date)} summary`} title="Delete"><Trash2 size={14} /></Button></span>
                       </div>
                     })}
                   </div>
@@ -574,6 +631,7 @@ function App() {
             </button>
           })}
         </nav>
+        {viewingSummary && <SummaryViewDialog summary={viewingSummary} onClose={() => setViewingSummary(null)} onEdit={() => { const summary = viewingSummary; setViewingSummary(null); editSummary(summary) }} onDownload={() => downloadSavedPdf(viewingSummary)} />}
       </main>
     </MotionConfig>
   )
