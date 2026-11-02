@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
+import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import {
-  ArrowDownLeft, ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert,
-  CircleHelp, ClipboardList, LoaderCircle, LogOut, RefreshCw, Save, ShieldCheck,
+  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert,
+  CircleHelp, ClipboardList, History, House, LoaderCircle, LogOut, RefreshCw,
+  Save, Settings, ShieldCheck,
 } from 'lucide-react'
 import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
@@ -13,7 +15,13 @@ import { amountOrZero, formatMoney, formatSunday, getSundayInKampala, isSunday, 
 import { supabase, supabaseConfigured } from './lib/supabase'
 import type { Database } from './lib/database.types'
 
-type View = 'record' | 'history' | 'requests'
+type View = 'dashboard' | 'history' | 'settings'
+const viewOrder: Record<View, number> = { dashboard: 0, history: 1, settings: 2 }
+const pageVariants = {
+  enter: (direction: number) => ({ opacity: 0, x: direction * 22 }),
+  center: { opacity: 1, x: 0 },
+  exit: (direction: number) => ({ opacity: 0, x: direction * -18 }),
+}
 type FormValues = { ids_printed: string; mtn_amount: string; airtel_amount: string; expenses: string; cash_deposited: string }
 type TeamProfile = Database['public']['Tables']['profiles']['Row']
 
@@ -171,7 +179,9 @@ function App() {
   const [authReady, setAuthReady] = useState(false)
   const [profile, setProfile] = useState<TeamProfile | null>(null)
   const [profileLoadedFor, setProfileLoadedFor] = useState('')
-  const [view, setView] = useState<View>('record')
+  const [nameDraft, setNameDraft] = useState('')
+  const [view, setView] = useState<View>('dashboard')
+  const [direction, setDirection] = useState(1)
   const [selectedDate, setSelectedDate] = useState(getSundayInKampala())
   const [form, setForm] = useState<FormValues>(emptyForm)
   const [summaries, setSummaries] = useState<SalesSummary[]>([])
@@ -223,6 +233,7 @@ function App() {
     supabase.from('profiles').select('*').eq('id', userId).maybeSingle().then(({ data, error: profileError }) => {
       if (!active) return
       setProfile(data)
+      setNameDraft(data?.display_name || '')
       setProfileLoadedFor(userId)
       if (profileError) setError(`Could not load your account status. ${profileError.message}`)
     })
@@ -286,10 +297,16 @@ function App() {
     setNotice('')
   }
 
-  async function loadSummary(summary: SalesSummary) {
-    setSelectedDate(summary.sunday_date)
-    setView('record')
+  function navigate(nextView: View) {
+    if (nextView === view) return
+    setDirection(viewOrder[nextView] > viewOrder[view] ? 1 : -1)
+    setView(nextView)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function loadSummary(summary: SalesSummary) {
+    setSelectedDate(summary.sunday_date)
+    navigate('dashboard')
   }
 
   async function saveSummary(event: FormEvent<HTMLFormElement>) {
@@ -333,6 +350,7 @@ function App() {
     if (profileError) setError(`Could not check approval status. ${profileError.message}`)
     else {
       setProfile(data)
+      setNameDraft(data?.display_name || '')
       setProfileLoadedFor(session.user.id)
     }
   }
@@ -351,6 +369,30 @@ function App() {
     setNotice(decision === 'approved' ? 'Cashier approved. They can now access sales.' : 'Signup request declined.')
   }
 
+  async function saveProfileName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !session || !profile) return
+    const trimmedName = nameDraft.trim()
+    if (!trimmedName) { setError('Enter a name before saving.'); return }
+    setSaving(true)
+    setError('')
+    setNotice('')
+    const { error: updateError } = await supabase.auth.updateUser({ data: { full_name: trimmedName } })
+    if (updateError) {
+      setSaving(false)
+      setError(`Could not update your name. ${updateError.message}`)
+      return
+    }
+    const { data, error: profileError } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+    setSaving(false)
+    if (profileError) setError(`Your name was updated, but the profile could not refresh. ${profileError.message}`)
+    else {
+      setProfile(data)
+      setNameDraft(data.display_name || '')
+      setNotice('Profile name updated.')
+    }
+  }
+
   if (!supabaseConfigured) return <SetupScreen />
   if (!authReady) return <main className="loading-screen"><LoaderCircle className="spin" size={20} /><span>Connecting securely…</span></main>
   if (!session) return <SignIn onSignedIn={setSession} />
@@ -359,95 +401,139 @@ function App() {
   if (profile.approval_status !== 'approved') return <AwaitingApproval profile={profile} onCheck={checkApprovalStatus} onSignOut={signOut} checking={profileLoadedFor !== session.user.id} />
 
   const currentUserName = profile.display_name || displayName(session.user)
+  const pages: { id: View; label: string; icon: typeof House; count?: number }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: House },
+    { id: 'history', label: 'History', icon: History, count: summaries.length },
+    { id: 'settings', label: 'Settings', icon: Settings, count: profile.role === 'admin' ? requests.length : undefined },
+  ]
+  const pageInfo = {
+    dashboard: { eyebrow: 'Weekly close', title: 'Sunday sales', description: 'Record this Sunday’s figures and review the closing balance.' },
+    history: { eyebrow: 'Sales records', title: 'History', description: 'Browse saved Sunday summaries and who recorded them.' },
+    settings: { eyebrow: 'Your workspace', title: 'Settings', description: 'Manage your account and team access.' },
+  }[view]
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#main" aria-label="Sunday Close home"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></a>
-        <div className="account"><span className="user-avatar" aria-hidden="true">{currentUserName.slice(0, 1).toUpperCase()}</span><span className="account-name">{currentUserName}</span><Button variant="ghost" size="sm" onClick={signOut} aria-label="Sign out"><LogOut size={16} /><span className="signout-label">Sign out</span></Button></div>
-      </header>
+    <MotionConfig reducedMotion="user">
+      <main className="app-shell">
+        <header className="topbar">
+          <a className="brand" href="#main" aria-label="Sunday Close home"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></a>
+          <div className="account"><span className="user-avatar" aria-hidden="true">{currentUserName.slice(0, 1).toUpperCase()}</span><span className="account-name">{currentUserName}</span></div>
+        </header>
 
-      <section className="page-heading" id="main">
-        <div><div className="eyebrow">Weekly record</div><h1>Sales summary</h1><p>Record this Sunday’s figures and review the closing balance.</p></div>
-        <div className="heading-date"><span className="date-dot" />Sunday sales</div>
-      </section>
+        {error && <div className="global-message"><ErrorNotice>{error}</ErrorNotice><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
+        {notice && <div className="global-message"><div className="notice notice-success" role="status"><BadgeCheck size={16} />{notice}</div><button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
 
-      <nav className="tabs" aria-label="Sales summary sections">
-        <button className={view === 'record' ? 'tab active' : 'tab'} onClick={() => setView('record')}><ArrowDownLeft size={15} />Record sales</button>
-        <button className={view === 'history' ? 'tab active' : 'tab'} onClick={() => setView('history')}><ClipboardList size={15} />Past Sundays <span className="tab-count">{summaries.length}</span></button>
-        {profile.role === 'admin' && <button className={view === 'requests' ? 'tab active' : 'tab'} onClick={() => setView('requests')}><ShieldCheck size={15} />Approvals <span className="tab-count">{requests.length}</span></button>}
-      </nav>
+        <AnimatePresence mode="wait" initial={false} custom={direction}>
+          <motion.section
+            className="page-transition"
+            key={view}
+            custom={direction}
+            variants={pageVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            aria-labelledby="page-title"
+          >
+            <section className="page-heading" id="main">
+              <div><div className="eyebrow">{pageInfo.eyebrow}</div><h1 id="page-title">{pageInfo.title}</h1><p>{pageInfo.description}</p></div>
+              {view === 'dashboard' && <div className="heading-date"><span className="date-dot" />{formatSunday(selectedDate)}</div>}
+            </section>
 
-      {error && <div className="global-message"><ErrorNotice>{error}</ErrorNotice><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
-      {notice && <div className="global-message"><div className="notice notice-success" role="status"><BadgeCheck size={16} />{notice}</div><button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
+            {view === 'dashboard' ? (
+              <div className="main-grid">
+                <Card className="entry-card">
+                  <CardHeader className="entry-header"><div><CardTitle>Enter Sunday’s figures</CardTitle><p>Enter amounts in Ugandan shillings.</p></div>{selectedSummary && <Badge>Saved</Badge>}</CardHeader>
+                  <CardContent>
+                    <form onSubmit={saveSummary}>
+                      <div className="field date-field"><Label htmlFor="sunday-date">Sunday date</Label><Input id="sunday-date" type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-describedby={!validSunday ? 'date-error' : undefined} /></div>
+                      {!validSunday && <p className="field-error" id="date-error">Please select a Sunday.</p>}
+                      <div className="fields-grid">
+                        <div className="field"><Label htmlFor="ids-printed">IDs printed</Label><Input id="ids-printed" type="number" min="0" step="1" inputMode="numeric" placeholder="0" value={form.ids_printed} onChange={(event) => setValue('ids_printed', event.target.value)} /><span className="field-hint">Number of IDs issued</span></div>
+                        <MoneyField id="mtn-amount" label="MTN Mobile Money" value={form.mtn_amount} onChange={(value) => setValue('mtn_amount', value)} />
+                        <MoneyField id="airtel-amount" label="Airtel Money" value={form.airtel_amount} onChange={(value) => setValue('airtel_amount', value)} />
+                        <MoneyField id="expenses" label="Total expenses" value={form.expenses} onChange={(value) => setValue('expenses', value)} />
+                        <MoneyField id="cash-deposited" label="Cash deposited" value={form.cash_deposited} onChange={(value) => setValue('cash_deposited', value)} />
+                      </div>
+                      <div className="form-note"><CircleHelp size={15} /><span>IDs are recorded as a count. Expenses are deducted from physical cash to calculate cash at hand.</span></div>
+                      <Button type="submit" className="save-button" disabled={saving || !validSunday}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{selectedSummary ? 'Update summary' : 'Save Sunday summary'}</Button>
+                    </form>
+                  </CardContent>
+                </Card>
 
-      {view === 'requests' && profile.role === 'admin' ? (
-        <Card className="requests-card">
-          <CardHeader className="history-header"><div><CardTitle>Signup requests</CardTitle><p>Approve confirmed cashier accounts before they can access sales.</p></div><Button variant="outline" size="sm" onClick={refreshRequests} disabled={requestsLoading}>{requestsLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}Refresh</Button></CardHeader>
-          {requestsLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading requests…</div> : requests.length === 0 ? <div className="empty-state"><div className="empty-icon"><BadgeCheck size={21} /></div><h3>No pending requests</h3><p>New requests appear here after the cashier confirms their email.</p></div> : (
-            <div className="request-list">
-              {requests.map((request) => (
-                <div className="request-row" key={request.id}>
-                  <span className="request-avatar">{(request.display_name || request.email).slice(0, 1).toUpperCase()}</span>
-                  <div className="request-info"><strong>{request.display_name || request.email}</strong><span>{request.email}</span><small>Requested {request.requested_at ? new Intl.DateTimeFormat('en-UG', { dateStyle: 'medium' }).format(new Date(request.requested_at)) : 'recently'}</small></div>
-                  <div className="request-actions"><Button size="sm" onClick={() => reviewRequest(request.id, 'approved')} disabled={reviewingId !== ''}>{reviewingId === request.id ? <LoaderCircle className="spin" size={14} /> : <BadgeCheck size={14} />}Approve</Button><Button size="sm" variant="outline" onClick={() => reviewRequest(request.id, 'rejected')} disabled={reviewingId !== ''}>Decline</Button></div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      ) : view === 'record' ? (
-        <div className="main-grid">
-          <Card className="entry-card">
-            <CardHeader className="entry-header"><div><CardTitle>Enter Sunday’s figures</CardTitle><p>Enter amounts in Ugandan shillings.</p></div>{selectedSummary && <Badge>Saved</Badge>}</CardHeader>
-            <CardContent>
-              <form onSubmit={saveSummary}>
-                <div className="field date-field"><Label htmlFor="sunday-date">Sunday date</Label><Input id="sunday-date" type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-describedby={!validSunday ? 'date-error' : undefined} /></div>
-                {!validSunday && <p className="field-error" id="date-error">Please select a Sunday.</p>}
-                <div className="fields-grid">
-                  <div className="field"><Label htmlFor="ids-printed">IDs printed</Label><Input id="ids-printed" type="number" min="0" step="1" inputMode="numeric" placeholder="0" value={form.ids_printed} onChange={(event) => setValue('ids_printed', event.target.value)} /><span className="field-hint">Number of IDs issued</span></div>
-                  <MoneyField id="mtn-amount" label="MTN Mobile Money" value={form.mtn_amount} onChange={(value) => setValue('mtn_amount', value)} />
-                  <MoneyField id="airtel-amount" label="Airtel Money" value={form.airtel_amount} onChange={(value) => setValue('airtel_amount', value)} />
-                  <MoneyField id="expenses" label="Total expenses" value={form.expenses} onChange={(value) => setValue('expenses', value)} />
-                  <MoneyField id="cash-deposited" label="Cash deposited" value={form.cash_deposited} onChange={(value) => setValue('cash_deposited', value)} />
-                </div>
-                <div className="form-note"><CircleHelp size={15} /><span>IDs are recorded as a count. Expenses are deducted from physical cash to calculate cash at hand.</span></div>
-                <Button type="submit" className="save-button" disabled={saving || !validSunday}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{selectedSummary ? 'Update summary' : 'Save Sunday summary'}</Button>
-              </form>
-            </CardContent>
-          </Card>
+                <Card className="summary-card" aria-live="polite">
+                  <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><Badge className="badge-live">LIVE</Badge></CardHeader>
+                  <CardContent>
+                    <div className="metric-label">Total amount worked</div><div className="worked-total">{formatMoney(worked)}</div><div className="metric-support">{formatMoney(mtn)} mobile money <span>·</span> {formatMoney(deposited)} cash</div>
+                    <div className="summary-divider" />
+                    <div className="balance-row"><div><div className="metric-label">Cash at hand</div><div className={cashAtHand < 0 ? 'balance-status status-warning' : 'balance-status'}><span className="status-dot" />{cashAtHand < 0 ? 'Expenses exceed cash deposited' : 'After expenses'}</div></div><div className={cashAtHand < 0 ? 'balance-value negative' : 'balance-value'}>{formatMoney(cashAtHand)}</div></div>
+                    <div className="breakdown"><h3>Money received</h3><div className="breakdown-row"><span>MTN Mobile Money</span><strong>{formatMoney(mtn)}</strong></div><div className="breakdown-row"><span>Airtel Money</span><strong>{formatMoney(airtel)}</strong></div><div className="breakdown-row"><span>Cash deposited</span><strong>{formatMoney(deposited)}</strong></div><div className="breakdown-row deduction"><span>Expenses</span><strong>− {formatMoney(expenses)}</strong></div></div>
+                    <div className="formula">Total worked = MTN + Airtel + cash deposited<br />Cash at hand = cash deposited − expenses</div>
+                    <div className="recorded-by"><span className="recorded-avatar">{(selectedSummary?.recorder?.display_name || selectedSummary?.recorder?.email || currentUserName).slice(0, 1).toUpperCase()}</span><span>{selectedSummary ? <>Recorded by <strong>{selectedSummary.recorder?.display_name || selectedSummary.recorder?.email || 'Team cashier'}</strong></> : <>Will be recorded by <strong>{currentUserName}</strong></>}</span></div>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : view === 'history' ? (
+              <Card className="history-card">
+                <CardHeader className="history-header"><div><CardTitle>Past Sundays</CardTitle><p>Saved sales summaries, newest first.</p></div><span className="history-total">{summaries.length} {summaries.length === 1 ? 'record' : 'records'}</span></CardHeader>
+                {historyLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading summaries…</div> : summaries.length === 0 ? <div className="empty-state"><div className="empty-icon"><ClipboardList size={21} /></div><h3>No summaries saved yet</h3><p>Save a Sunday’s sales figures and they’ll appear here.</p><Button variant="outline" onClick={() => navigate('dashboard')}>Record sales</Button></div> : (
+                  <div className="history-list">
+                    <div className="history-grid history-labels"><span>Sunday</span><span>IDs</span><span>Total worked</span><span>Cash at hand</span><span>Recorded by</span><span /></div>
+                    {summaries.map((summary) => {
+                      const total = summary.mtn_amount + summary.airtel_amount + summary.cash_deposited
+                      const balance = summary.cash_deposited - summary.expenses
+                      const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
+                      return <button className="history-grid history-item" key={summary.sunday_date} onClick={() => loadSummary(summary)} aria-label={`Open ${formatSunday(summary.sunday_date)} summary, recorded by ${cashier}`}>
+                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong className={balance < 0 ? 'negative' : ''}>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><ArrowRight className="history-arrow" size={16} />
+                      </button>
+                    })}
+                  </div>
+                )}
+              </Card>
+            ) : (
+              <div className="settings-grid">
+                <Card className="settings-card">
+                  <CardHeader className="settings-header"><div className="settings-profile-avatar">{currentUserName.slice(0, 1).toUpperCase()}</div><div><CardTitle>Account</CardTitle><p>Signed in to Sunday Close</p></div></CardHeader>
+                  <CardContent>
+                    <form className="settings-name-form" onSubmit={saveProfileName}><div className="field"><Label htmlFor="settings-name">Display name</Label><Input id="settings-name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} maxLength={80} required /></div><Button size="sm" type="submit" disabled={saving || nameDraft.trim() === (profile.display_name || '')}>{saving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}Save name</Button></form>
+                    <div className="settings-detail"><span>Email</span><strong>{profile.email}</strong></div>
+                    <div className="settings-detail"><span>Account type</span><strong>{profile.role === 'admin' ? 'Administrator' : 'Cashier'}</strong></div>
+                    <div className="settings-detail"><span>Access status</span><Badge className="settings-approved">Approved</Badge></div>
+                    <div className="settings-security"><ShieldCheck size={16} /><span>Your account is approved to view and record shared Sunday sales summaries.</span></div>
+                    <Button variant="outline" className="settings-signout" onClick={signOut}><LogOut size={15} />Sign out</Button>
+                  </CardContent>
+                </Card>
+                {profile.role === 'admin' && <Card className="requests-card">
+                  <CardHeader className="history-header"><div><CardTitle>Cashier approvals</CardTitle><p>Review new accounts before they can access sales.</p></div><Button variant="outline" size="sm" onClick={refreshRequests} disabled={requestsLoading}>{requestsLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}Refresh</Button></CardHeader>
+                  {requestsLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading requests…</div> : requests.length === 0 ? <div className="empty-state"><div className="empty-icon"><BadgeCheck size={21} /></div><h3>No pending requests</h3><p>New requests appear here after the cashier confirms their email.</p></div> : (
+                    <div className="request-list">
+                      {requests.map((request) => (
+                        <div className="request-row" key={request.id}>
+                          <span className="request-avatar">{(request.display_name || request.email).slice(0, 1).toUpperCase()}</span>
+                          <div className="request-info"><strong>{request.display_name || request.email}</strong><span>{request.email}</span><small>Requested {request.requested_at ? new Intl.DateTimeFormat('en-UG', { dateStyle: 'medium', timeZone: 'Africa/Kampala' }).format(new Date(request.requested_at)) : 'recently'}</small></div>
+                          <div className="request-actions"><Button size="sm" onClick={() => reviewRequest(request.id, 'approved')} disabled={reviewingId !== ''}>{reviewingId === request.id ? <LoaderCircle className="spin" size={14} /> : <BadgeCheck size={14} />}Approve</Button><Button size="sm" variant="outline" onClick={() => reviewRequest(request.id, 'rejected')} disabled={reviewingId !== ''}>Decline</Button></div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>}
+              </div>
+            )}
+          </motion.section>
+        </AnimatePresence>
 
-          <Card className="summary-card" aria-live="polite">
-            <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><Badge className="badge-live">LIVE</Badge></CardHeader>
-            <CardContent>
-              <div className="metric-label">Total amount worked</div><div className="worked-total">{formatMoney(worked)}</div><div className="metric-support">{formatMoney(mtn)} mobile money <span>·</span> {formatMoney(deposited)} cash</div>
-              <div className="summary-divider" />
-              <div className="balance-row"><div><div className="metric-label">Cash at hand</div><div className={cashAtHand < 0 ? 'balance-status status-warning' : 'balance-status'}><span className="status-dot" />{cashAtHand < 0 ? 'Expenses exceed cash deposited' : 'After expenses'}</div></div><div className={cashAtHand < 0 ? 'balance-value negative' : 'balance-value'}>{formatMoney(cashAtHand)}</div></div>
-              <div className="breakdown"><h3>Money received</h3><div className="breakdown-row"><span>MTN Mobile Money</span><strong>{formatMoney(mtn)}</strong></div><div className="breakdown-row"><span>Airtel Money</span><strong>{formatMoney(airtel)}</strong></div><div className="breakdown-row"><span>Cash deposited</span><strong>{formatMoney(deposited)}</strong></div><div className="breakdown-row deduction"><span>Expenses</span><strong>− {formatMoney(expenses)}</strong></div></div>
-              <div className="formula">Total worked = MTN + Airtel + cash deposited<br />Cash at hand = cash deposited − expenses</div>
-              <div className="recorded-by"><span className="recorded-avatar">{(selectedSummary?.recorder?.display_name || selectedSummary?.recorder?.email || currentUserName).slice(0, 1).toUpperCase()}</span><span>{selectedSummary ? <>Recorded by <strong>{selectedSummary.recorder?.display_name || selectedSummary.recorder?.email || 'Team cashier'}</strong></> : <>Will be recorded by <strong>{currentUserName}</strong></>}</span></div>
-            </CardContent>
-          </Card>
-        </div>
-      ) : (
-        <Card className="history-card">
-          <CardHeader className="history-header"><div><CardTitle>Past Sundays</CardTitle><p>Saved sales summaries, newest first.</p></div><span className="history-total">{summaries.length} {summaries.length === 1 ? 'record' : 'records'}</span></CardHeader>
-          {historyLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading summaries…</div> : summaries.length === 0 ? <div className="empty-state"><div className="empty-icon"><ClipboardList size={21} /></div><h3>No summaries saved yet</h3><p>Save a Sunday’s sales figures and they’ll appear here.</p><Button variant="outline" onClick={() => setView('record')}>Record sales</Button></div> : (
-            <div className="history-list">
-              <div className="history-grid history-labels"><span>Sunday</span><span>IDs</span><span>Total worked</span><span>Cash at hand</span><span>Recorded by</span><span /></div>
-              {summaries.map((summary) => {
-                const total = summary.mtn_amount + summary.airtel_amount + summary.cash_deposited
-                const balance = summary.cash_deposited - summary.expenses
-                const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
-                return <button className="history-grid history-item" key={summary.sunday_date} onClick={() => loadSummary(summary)} aria-label={`Open ${formatSunday(summary.sunday_date)} summary, recorded by ${cashier}`}>
-                  <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong className={balance < 0 ? 'negative' : ''}>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><ArrowRight className="history-arrow" size={16} />
-                </button>
-              })}
-            </div>
-          )}
-        </Card>
-      )}
-      <footer className="page-footer"><span>Sunday Close · Sales record</span><span><ShieldCheck size={13} /> Team data is private</span></footer>
-    </main>
+        <nav className="floating-nav" aria-label="Main navigation">
+          {pages.map((page) => {
+            const Icon = page.icon
+            return <button key={page.id} className={view === page.id ? 'floating-nav-item active' : 'floating-nav-item'} onClick={() => navigate(page.id)} aria-current={view === page.id ? 'page' : undefined}>
+              {view === page.id && <motion.span className="floating-nav-bubble" layoutId="floating-nav-bubble" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
+              <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+              <span>{page.label}</span>
+              {page.count !== undefined && page.count > 0 && <span className="nav-count">{page.count > 99 ? '99+' : page.count}</span>}
+            </button>
+          })}
+        </nav>
+      </main>
+    </MotionConfig>
   )
 }
 
