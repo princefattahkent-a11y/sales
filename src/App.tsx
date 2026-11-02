@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { toast } from 'sonner'
 import {
-  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert, Download,
+  ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert, Download, Pencil, Trash2,
   CircleHelp, ClipboardList, History, House, LoaderCircle, LogOut, RefreshCw,
   Save, Settings, ShieldCheck,
 } from 'lucide-react'
@@ -174,6 +174,7 @@ function App() {
   const [view, setView] = useState<View>('dashboard')
   const [direction, setDirection] = useState(1)
   const [selectedDate, setSelectedDate] = useState(getSundayInKampala())
+  const [editingDate, setEditingDate] = useState<string | null>(null)
   const [form, setForm] = useState<FormValues>(emptyForm)
   const [summaries, setSummaries] = useState<SalesSummary[]>([])
   const [requests, setRequests] = useState<TeamProfile[]>([])
@@ -257,17 +258,9 @@ function App() {
     void refreshRequests()
   }, [session?.user.id, profile?.role])
 
-  const selectedSummary = useMemo(() => summaries.find((summary) => summary.sunday_date === selectedDate), [summaries, selectedDate])
-  useEffect(() => {
-    if (!selectedDate) return
-    setForm(selectedSummary ? {
-      ids_printed: String(selectedSummary.ids_printed),
-      mtn_amount: String(selectedSummary.mtn_amount),
-      airtel_amount: String(selectedSummary.airtel_amount),
-      expenses: String(selectedSummary.expenses),
-      cash_deposited: String(selectedSummary.cash_deposited),
-    } : emptyForm)
-  }, [selectedSummary, selectedDate])
+  const selectedSummary = summaries.find((summary) => summary.sunday_date === selectedDate)
+  const editingSummary = editingDate === selectedDate ? selectedSummary : undefined
+  const dateAlreadySaved = Boolean(selectedSummary && !editingSummary)
 
   const ids = amountOrZero(form.ids_printed)
   const mtn = amountOrZero(form.mtn_amount)
@@ -291,8 +284,16 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function loadSummary(summary: SalesSummary) {
+  function editSummary(summary: SalesSummary) {
     setSelectedDate(summary.sunday_date)
+    setEditingDate(summary.sunday_date)
+    setForm({
+      ids_printed: String(summary.ids_printed),
+      mtn_amount: String(summary.mtn_amount),
+      airtel_amount: String(summary.airtel_amount),
+      expenses: String(summary.expenses),
+      cash_deposited: String(summary.cash_deposited),
+    })
     navigate('dashboard')
   }
 
@@ -300,6 +301,7 @@ function App() {
     event.preventDefault()
     if (!supabase || !session) return
     if (!validSunday) { toast.error('Choose a Sunday to save this summary.'); return }
+    if (dateAlreadySaved) { toast.error('A summary already exists for this Sunday. Edit it from History.'); return }
     setSaving(true)
     const draft: SalesDraft = {
       sunday_date: selectedDate,
@@ -309,17 +311,44 @@ function App() {
       expenses,
       cash_deposited: deposited,
     }
-    const { data, error: saveError } = await supabase.from('sales_summaries')
-      .upsert({ ...draft, recorded_by: session.user.id }, { onConflict: 'sunday_date' })
+    const saveRequest = editingSummary
+      ? supabase.from('sales_summaries').update({
+          ids_printed: draft.ids_printed,
+          mtn_amount: draft.mtn_amount,
+          airtel_amount: draft.airtel_amount,
+          expenses: draft.expenses,
+          cash_deposited: draft.cash_deposited,
+        }).eq('sunday_date', selectedDate)
+      : supabase.from('sales_summaries').insert({ ...draft, recorded_by: session.user.id })
+    const { data, error: saveError } = await saveRequest
       .select('*, recorder:profiles!sales_summaries_recorded_by_fkey(display_name,email)')
       .single()
     setSaving(false)
     if (saveError) {
-      toast.error(saveError.message.includes('sales_summaries') ? 'Could not save the summary. Check that the Supabase setup SQL has been applied.' : saveError.message)
+      toast.error(saveError.code === '23505'
+        ? 'A summary already exists for this Sunday. Edit it from History.'
+        : saveError.message.includes('sales_summaries')
+          ? 'Could not save the summary. Check that the Supabase setup SQL has been applied.'
+          : saveError.message)
       return
     }
     setSummaries((current) => [data as SalesSummary, ...current.filter((item) => item.sunday_date !== selectedDate)].sort((a, b) => b.sunday_date.localeCompare(a.sunday_date)))
-    toast.success(`Summary for ${formatSunday(selectedDate)} saved.`)
+    setForm(emptyForm)
+    setEditingDate(null)
+    toast.success(editingSummary ? `Summary for ${formatSunday(selectedDate)} updated.` : `Summary for ${formatSunday(selectedDate)} saved.`)
+  }
+
+  async function deleteSummary(summary: SalesSummary) {
+    if (!supabase) return
+    if (!window.confirm(`Delete the sales summary for ${formatSunday(summary.sunday_date)}? This cannot be undone.`)) return
+    const { error: deleteError } = await supabase.from('sales_summaries').delete().eq('sunday_date', summary.sunday_date)
+    if (deleteError) { toast.error(`Could not delete the summary. ${deleteError.message}`); return }
+    setSummaries((current) => current.filter((item) => item.sunday_date !== summary.sunday_date))
+    if (editingDate === summary.sunday_date) {
+      setEditingDate(null)
+      setForm(emptyForm)
+    }
+    toast.success(`Summary for ${formatSunday(summary.sunday_date)} deleted.`)
   }
 
   function downloadCurrentPdf() {
@@ -350,8 +379,9 @@ function App() {
       const { downloadSalesSummaryPdf } = await import('./lib/sales-pdf')
       downloadSalesSummaryPdf(draft, cashier)
       toast.success('Sunday sales PDF downloaded.')
-    } catch {
-      toast.error('Could not create the PDF. Please try again.')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      toast.error(`PDF download failed: ${detail}`, { duration: 7000 })
     }
   }
 
@@ -454,11 +484,12 @@ function App() {
             {view === 'dashboard' ? (
               <div className="main-grid">
                 <Card className="entry-card">
-                  <CardHeader className="entry-header"><div><CardTitle>Enter Sunday’s figures</CardTitle><p>Enter amounts in Ugandan shillings.</p></div>{selectedSummary && <Badge>Saved</Badge>}</CardHeader>
+                  <CardHeader className="entry-header"><div><CardTitle>{editingSummary ? 'Edit Sunday’s figures' : 'Enter Sunday’s figures'}</CardTitle><p>Enter amounts in Ugandan shillings.</p></div>{editingSummary && <Badge>Editing</Badge>}</CardHeader>
                   <CardContent>
                     <form onSubmit={saveSummary}>
-                      <div className="field date-field"><Label htmlFor="sunday-date">Sunday date</Label><Input id="sunday-date" type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-describedby={!validSunday ? 'date-error' : undefined} /></div>
+                      <div className="field date-field"><Label htmlFor="sunday-date">Sunday date</Label><Input id="sunday-date" type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setEditingDate(null); setForm(emptyForm) }} aria-describedby={!validSunday ? 'date-error' : dateAlreadySaved ? 'date-saved-hint' : undefined} /></div>
                       {!validSunday && <p className="field-error" id="date-error">Please select a Sunday.</p>}
+                      {dateAlreadySaved && <p className="field-hint saved-date-hint" id="date-saved-hint">A summary is already saved for this Sunday. Edit or delete it from History.</p>}
                       <div className="fields-grid">
                         <div className="field"><Label htmlFor="ids-printed">IDs printed</Label><Input id="ids-printed" type="number" min="0" step="1" inputMode="numeric" placeholder="0" value={form.ids_printed} onChange={(event) => setValue('ids_printed', event.target.value)} /><span className="field-hint">Number of IDs issued</span></div>
                         <MoneyField id="mtn-amount" label="MTN Mobile Money" value={form.mtn_amount} onChange={(value) => setValue('mtn_amount', value)} />
@@ -467,13 +498,13 @@ function App() {
                         <MoneyField id="cash-deposited" label="Cash deposited" value={form.cash_deposited} onChange={(value) => setValue('cash_deposited', value)} />
                       </div>
                       <div className="form-note"><CircleHelp size={15} /><span>IDs are recorded as a count. Expenses are deducted from physical cash to calculate cash at hand.</span></div>
-                      <Button type="submit" className="save-button" disabled={saving || !validSunday}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{selectedSummary ? 'Update summary' : 'Save Sunday summary'}</Button>
+                      <Button type="submit" className="save-button" disabled={saving || !validSunday || dateAlreadySaved}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{editingSummary ? 'Save changes' : 'Save Sunday summary'}</Button>
                     </form>
                   </CardContent>
                 </Card>
 
                 <Card className="summary-card" aria-live="polite">
-                    <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><div className="summary-header-actions"><Badge className="badge-live">LIVE</Badge><Button variant="outline" size="sm" onClick={downloadCurrentPdf} disabled={!validSunday}><Download size={14} />Download PDF</Button></div></CardHeader>
+                    <CardHeader className="summary-header"><CardTitle>Closing summary</CardTitle><div className="summary-header-actions"><Badge className="badge-live">LIVE</Badge><Button variant="outline" size="sm" onClick={downloadCurrentPdf} disabled={!validSunday || dateAlreadySaved}><Download size={14} />Download PDF</Button></div></CardHeader>
                   <CardContent>
                     <div className="metric-label">Total amount worked</div><div className="worked-total">{formatMoney(worked)}</div><div className="metric-support">{formatMoney(mtn)} mobile money <span>·</span> {formatMoney(deposited)} cash</div>
                     <div className="summary-divider" />
@@ -494,7 +525,7 @@ function App() {
                       const balance = Math.max(0, summary.cash_deposited - summary.expenses)
                       const cashier = summary.recorder?.display_name || summary.recorder?.email || 'Team cashier'
                       return <div className="history-grid history-item" key={summary.sunday_date}>
-                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><span className="history-actions"><Button variant="ghost" size="sm" onClick={() => loadSummary(summary)} aria-label={`Open ${formatSunday(summary.sunday_date)} summary`}>Open</Button><Button variant="outline" size="sm" onClick={() => downloadSavedPdf(summary)} aria-label={`Download ${formatSunday(summary.sunday_date)} PDF`}><Download size={14} />PDF</Button></span>
+                        <span className="history-date">{formatSunday(summary.sunday_date)}</span><span>{summary.ids_printed.toLocaleString('en-UG')}</span><strong>{formatMoney(total)}</strong><strong>{formatMoney(balance)}</strong><span className="history-cashier"><span className="cashier-avatar">{cashier.slice(0, 1).toUpperCase()}</span>{cashier}</span><span className="history-actions"><Button variant="ghost" size="sm" onClick={() => editSummary(summary)} aria-label={`Edit ${formatSunday(summary.sunday_date)} summary`} title="Edit"><Pencil size={14} /></Button><Button variant="outline" size="sm" onClick={() => downloadSavedPdf(summary)} aria-label={`Download ${formatSunday(summary.sunday_date)} PDF`} title="Download PDF"><Download size={14} /></Button><Button variant="ghost" size="sm" className="delete-action" onClick={() => deleteSummary(summary)} aria-label={`Delete ${formatSunday(summary.sunday_date)} summary`} title="Delete"><Trash2 size={14} /></Button></span>
                       </div>
                     })}
                   </div>

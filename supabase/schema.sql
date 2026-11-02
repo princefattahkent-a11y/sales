@@ -221,6 +221,7 @@ drop policy if exists "Signed-in team can update sales summaries" on public.sale
 drop policy if exists "approved_team_read_sales" on public.sales_summaries;
 drop policy if exists "approved_team_insert_sales" on public.sales_summaries;
 drop policy if exists "approved_team_update_sales" on public.sales_summaries;
+drop policy if exists "approved_team_delete_sales" on public.sales_summaries;
 create policy "approved_team_read_sales"
   on public.sales_summaries for select to authenticated
   using (public.is_approved_team_member());
@@ -231,6 +232,9 @@ create policy "approved_team_update_sales"
   on public.sales_summaries for update to authenticated
   using (public.is_approved_team_member())
   with check (public.is_approved_team_member());
+create policy "approved_team_delete_sales"
+  on public.sales_summaries for delete to authenticated
+  using (public.is_approved_team_member());
 
 grant select on public.profiles to authenticated;
-grant select, insert, update on public.sales_summaries to authenticated;
+grant select, insert, update, delete on public.sales_summaries to authenticated;

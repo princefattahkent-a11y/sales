@@ -37,3 +37,5 @@ npm run dev
 Only approved accounts can read, create, or update `sales_summaries`. Admins can read pending signup profiles. Approved team members can read approved profile names for cashier attribution. A sales record's `recorded_by` user is set when a cashier first saves that Sunday, and database triggers preserve the original cashier when the record is edited.
 
 The application calculates total amount worked as MTN + Airtel + cash deposited, and cash at hand as cash deposited − expenses. The SQL schema rejects non-Sunday dates and negative amounts.
+
+When upgrading an existing project, rerun `supabase/schema.sql` to apply the approved-team delete policy used by the History page's Delete action.

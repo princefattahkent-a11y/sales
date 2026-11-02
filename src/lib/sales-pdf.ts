@@ -29,8 +29,9 @@ export function downloadSalesSummaryPdf(summary: SalesDraft, cashier: string) {
   pdf.setTextColor(32, 41, 35)
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(11)
-  pdf.text(cashier, margin, y + 7)
-  y += 22
+  const cashierLines = pdf.splitTextToSize(cashier, pageWidth - margin * 2)
+  pdf.text(cashierLines, margin, y + 7)
+  y += 22 + (cashierLines.length - 1) * 5
 
   const rows: [string, string][] = [
     ['IDs printed', summary.ids_printed.toLocaleString('en-UG')],
@@ -86,5 +87,13 @@ export function downloadSalesSummaryPdf(summary: SalesDraft, cashier: string) {
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(8)
   pdf.text(`Generated ${generated}`, margin, 280)
-  pdf.save(`sunday-sales-${summary.sunday_date}.pdf`)
+  const blobUrl = URL.createObjectURL(pdf.output('blob'))
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = `sunday-sales-${summary.sunday_date}.pdf`
+  downloadLink.style.display = 'none'
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  downloadLink.remove()
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
 }
