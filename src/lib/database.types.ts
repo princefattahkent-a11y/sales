@@ -4,9 +4,34 @@ export type Database = {
   public: {
     Tables: {
       profiles: {
-        Row: { id: string; email: string; display_name: string; created_at: string }
-        Insert: { id: string; email: string; display_name?: string; created_at?: string }
-        Update: { email?: string; display_name?: string }
+        Row: {
+          id: string
+          email: string
+          display_name: string | null
+          role: 'admin' | 'cashier'
+          approval_status: 'pending' | 'approved' | 'rejected'
+          email_confirmed_at: string | null
+          requested_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id: string
+          email: string
+          display_name?: string | null
+          role?: 'admin' | 'cashier'
+          approval_status?: 'pending' | 'approved' | 'rejected'
+          email_confirmed_at?: string | null
+          requested_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          email?: string
+          display_name?: string | null
+          role?: 'admin' | 'cashier'
+          approval_status?: 'pending' | 'approved' | 'rejected'
+          email_confirmed_at?: string | null
+          requested_at?: string | null
+        }
         Relationships: []
       }
       sales_summaries: {
@@ -49,7 +74,12 @@ export type Database = {
       }
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: {
+      review_cashier_request: {
+        Args: { target_user_id: string; decision: 'approved' | 'rejected' }
+        Returns: undefined
+      }
+    }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }

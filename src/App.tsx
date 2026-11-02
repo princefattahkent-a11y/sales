@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import {
   ArrowDownLeft, ArrowRight, BadgeCheck, ChartNoAxesCombined, CircleAlert,
-  CircleHelp, ClipboardList, LoaderCircle, LogOut, Save, ShieldCheck,
+  CircleHelp, ClipboardList, LoaderCircle, LogOut, RefreshCw, Save, ShieldCheck,
 } from 'lucide-react'
 import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
@@ -11,9 +11,11 @@ import { Input } from './components/ui/input'
 import { Label } from './components/ui/label'
 import { amountOrZero, formatMoney, formatSunday, getSundayInKampala, isSunday, type SalesDraft, type SalesSummary } from './lib/sales'
 import { supabase, supabaseConfigured } from './lib/supabase'
+import type { Database } from './lib/database.types'
 
-type View = 'record' | 'history'
+type View = 'record' | 'history' | 'requests'
 type FormValues = { ids_printed: string; mtn_amount: string; airtel_amount: string; expenses: string; cash_deposited: string }
+type TeamProfile = Database['public']['Tables']['profiles']['Row']
 
 const emptyForm: FormValues = { ids_printed: '', mtn_amount: '', airtel_amount: '', expenses: '', cash_deposited: '' }
 
@@ -37,7 +39,7 @@ function SetupScreen() {
           <ol className="setup-steps">
             <li><span>1</span><div><strong>Copy the environment template</strong><p>Duplicate <code>.env.example</code> as <code>.env.local</code>.</p></div></li>
             <li><span>2</span><div><strong>Add your project URL and anon key</strong><p>Find both in Supabase under Project Settings → API.</p></div></li>
-            <li><span>3</span><div><strong>Set up the database and invited staff</strong><p>Follow <code>SUPABASE_SETUP.md</code> to apply the SQL and invite cashiers.</p></div></li>
+            <li><span>3</span><div><strong>Set up approvals and team access</strong><p>Follow <code>SUPABASE_SETUP.md</code> to apply the SQL and create the first admin.</p></div></li>
           </ol>
           <p className="setup-foot"><CircleHelp size={15} /> The anon key is designed for browser use. Keep the service role key private.</p>
         </CardContent>
@@ -47,6 +49,8 @@ function SetupScreen() {
 }
 
 function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
@@ -65,9 +69,26 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
     else if (data.session) onSignedIn(data.session)
   }
 
+  async function handleSignUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase) return
+    setPending(true)
+    setError('')
+    setMessage('')
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: { data: { full_name: name.trim() }, emailRedirectTo: window.location.origin },
+    })
+    setPending(false)
+    if (signUpError) setError(signUpError.message)
+    else if (data.session) onSignedIn(data.session)
+    else setMessage('Check your email to confirm your account. After confirmation, an admin can approve your request.')
+  }
+
   async function sendSignInLink() {
     if (!supabase) return
-    if (!email.trim()) { setError('Enter your invited team email first.'); return }
+    if (!email.trim()) { setError('Enter your email first.'); return }
     setPending(true)
     setError('')
     setMessage('')
@@ -77,25 +98,60 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
     })
     setPending(false)
     if (linkError) setError(linkError.message)
-    else setMessage('If that email belongs to an invited cashier, a sign-in link is on its way.')
+    else setMessage('If that email belongs to an account, a sign-in link is on its way.')
   }
 
   return (
     <main className="setup-shell">
       <div className="brand"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></div>
       <Card className="signin-card">
-        <CardHeader><div className="eyebrow">Team access</div><CardTitle>Sign in to continue</CardTitle><p className="muted">Use the email and password from your team invitation.</p></CardHeader>
+        <CardHeader><div className="eyebrow">Team access</div><CardTitle>{mode === 'signup' ? 'Create a cashier account' : 'Sign in to continue'}</CardTitle><p className="muted">{mode === 'signup' ? 'Register with your name and email. Sales access starts after admin approval.' : 'Sign in to record and review Sunday sales.'}</p></CardHeader>
         <CardContent>
-          <form className="signin-form" onSubmit={handleSubmit}>
+          <form className="signin-form" onSubmit={mode === 'signup' ? handleSignUp : handleSubmit}>
+            {mode === 'signup' && <div className="field"><Label htmlFor="full-name">Full name</Label><Input id="full-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required /></div>}
             <div className="field"><Label htmlFor="email">Email</Label><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
-            <div className="field"><Label htmlFor="password">Password</Label><Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
+            <div className="field"><Label htmlFor="password">Password</Label><Input id="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
             {error && <ErrorNotice>{error}</ErrorNotice>}
             {message && <div className="notice notice-success" role="status">{message}</div>}
-            <Button type="submit" disabled={pending}>{pending ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}Sign in</Button>
-            <Button type="button" variant="outline" disabled={pending} onClick={sendSignInLink}>{pending ? <LoaderCircle className="spin" size={16} /> : null}Email a sign-in link</Button>
+            <Button type="submit" disabled={pending}>{pending ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}{mode === 'signup' ? 'Create account' : 'Sign in'}</Button>
+            {mode === 'signin' && <Button type="button" variant="outline" disabled={pending} onClick={sendSignInLink}>{pending ? <LoaderCircle className="spin" size={16} /> : null}Email a sign-in link</Button>}
           </form>
-          <p className="signin-foot">Access is limited to invited team members. New cashiers can use an email sign-in link.</p>
+          <p className="auth-switch">{mode === 'signup' ? 'Already have an account?' : 'New cashier?'} <button type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setError(''); setMessage('') }}>{mode === 'signup' ? 'Sign in' : 'Create an account'}</button></p>
+          <p className="signin-foot">New accounts must confirm their email and wait for admin approval before accessing sales.</p>
         </CardContent>
+      </Card>
+    </main>
+  )
+}
+
+function AwaitingApproval({
+  profile,
+  onCheck,
+  onSignOut,
+  checking,
+}: {
+  profile: TeamProfile
+  onCheck: () => void
+  onSignOut: () => void
+  checking: boolean
+}) {
+  const rejected = profile.approval_status === 'rejected'
+  const emailUnconfirmed = !profile.email_confirmed_at
+  return (
+    <main className="setup-shell">
+      <div className="brand"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></div>
+      <Card className="approval-state-card">
+        <div className={rejected ? 'approval-state-icon rejected' : 'approval-state-icon'}>{rejected ? <CircleAlert size={21} /> : <ShieldCheck size={21} />}</div>
+        <div className="eyebrow">Cashier account</div>
+        <h1>{rejected ? 'Request not approved' : emailUnconfirmed ? 'Confirm your email' : 'Waiting for admin approval'}</h1>
+        <p>{rejected
+          ? 'Your access request was not approved. Please contact the Sunday Close administrator if you think this is a mistake.'
+          : emailUnconfirmed
+            ? 'Check your inbox for the confirmation link. After you confirm your email, an admin can review your access request.'
+            : 'Your account request has been sent to the admin. You’ll be able to record and review sales once it is approved.'}</p>
+        <div className="approval-account"><span className="recorded-avatar">{(profile.display_name || profile.email).slice(0, 1).toUpperCase()}</span><span><strong>{profile.display_name || profile.email}</strong><small>{profile.email}</small></span></div>
+        {!rejected && <Button variant="outline" onClick={onCheck} disabled={checking}>{checking ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}Check approval status</Button>}
+        <Button variant="ghost" onClick={onSignOut}><LogOut size={15} />Sign out</Button>
       </Card>
     </main>
   )
@@ -113,14 +169,32 @@ function MoneyField({ id, label, value, onChange }: { id: string; label: string;
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(false)
+  const [profile, setProfile] = useState<TeamProfile | null>(null)
+  const [profileLoadedFor, setProfileLoadedFor] = useState('')
   const [view, setView] = useState<View>('record')
   const [selectedDate, setSelectedDate] = useState(getSundayInKampala())
   const [form, setForm] = useState<FormValues>(emptyForm)
   const [summaries, setSummaries] = useState<SalesSummary[]>([])
+  const [requests, setRequests] = useState<TeamProfile[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [requestsLoading, setRequestsLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [reviewingId, setReviewingId] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  async function refreshRequests() {
+    if (!supabase || profile?.role !== 'admin') return
+    setRequestsLoading(true)
+    const { data, error: requestError } = await supabase.from('profiles')
+      .select('*')
+      .eq('approval_status', 'pending')
+      .not('email_confirmed_at', 'is', null)
+      .order('requested_at', { ascending: true })
+    if (requestError) setError(`Could not load signup requests. ${requestError.message}`)
+    else setRequests(data || [])
+    setRequestsLoading(false)
+  }
 
   useEffect(() => {
     if (!supabase) return
@@ -138,7 +212,29 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!supabase || !session) return
+    const userId = session?.user.id
+    if (!supabase || !userId) {
+      setProfile(null)
+      setProfileLoadedFor('')
+      return
+    }
+    let active = true
+    setProfileLoadedFor('')
+    supabase.from('profiles').select('*').eq('id', userId).maybeSingle().then(({ data, error: profileError }) => {
+      if (!active) return
+      setProfile(data)
+      setProfileLoadedFor(userId)
+      if (profileError) setError(`Could not load your account status. ${profileError.message}`)
+    })
+    return () => { active = false }
+  }, [session?.user.id])
+
+  useEffect(() => {
+    if (!supabase || !session || profile?.approval_status !== 'approved') {
+      setSummaries([])
+      setHistoryLoading(false)
+      return
+    }
     let active = true
     setHistoryLoading(true)
     supabase.from('sales_summaries')
@@ -151,7 +247,15 @@ function App() {
         setHistoryLoading(false)
       })
     return () => { active = false }
-  }, [session])
+  }, [session?.user.id, profile?.approval_status])
+
+  useEffect(() => {
+    if (!supabase || !session || profile?.role !== 'admin') {
+      setRequests([])
+      return
+    }
+    void refreshRequests()
+  }, [session?.user.id, profile?.role])
 
   const selectedSummary = useMemo(() => summaries.find((summary) => summary.sunday_date === selectedDate), [summaries, selectedDate])
   useEffect(() => {
@@ -222,11 +326,39 @@ function App() {
     if (signOutError) setError(signOutError.message)
   }
 
+  async function checkApprovalStatus() {
+    if (!supabase || !session) return
+    setProfileLoadedFor('')
+    const { data, error: profileError } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()
+    if (profileError) setError(`Could not check approval status. ${profileError.message}`)
+    else {
+      setProfile(data)
+      setProfileLoadedFor(session.user.id)
+    }
+  }
+
+  async function reviewRequest(userId: string, decision: 'approved' | 'rejected') {
+    if (!supabase) return
+    setReviewingId(userId)
+    setError('')
+    const { error: reviewError } = await supabase.rpc('review_cashier_request', { target_user_id: userId, decision })
+    setReviewingId('')
+    if (reviewError) {
+      setError(`Could not update this request. ${reviewError.message}`)
+      return
+    }
+    setRequests((current) => current.filter((request) => request.id !== userId))
+    setNotice(decision === 'approved' ? 'Cashier approved. They can now access sales.' : 'Signup request declined.')
+  }
+
   if (!supabaseConfigured) return <SetupScreen />
   if (!authReady) return <main className="loading-screen"><LoaderCircle className="spin" size={20} /><span>Connecting securely…</span></main>
   if (!session) return <SignIn onSignedIn={setSession} />
+  if (profileLoadedFor !== session.user.id) return <main className="loading-screen"><LoaderCircle className="spin" size={20} /><span>Checking account approval…</span></main>
+  if (!profile) return <main className="setup-shell"><div className="brand"><span className="brand-mark"><ChartNoAxesCombined size={18} /></span><span>Sunday close</span></div><Card className="approval-state-card"><ErrorNotice>{error || 'Your account profile is not ready yet. Contact the app administrator.'}</ErrorNotice><Button variant="ghost" onClick={signOut}><LogOut size={15} />Sign out</Button></Card></main>
+  if (profile.approval_status !== 'approved') return <AwaitingApproval profile={profile} onCheck={checkApprovalStatus} onSignOut={signOut} checking={profileLoadedFor !== session.user.id} />
 
-  const currentUserName = displayName(session.user)
+  const currentUserName = profile.display_name || displayName(session.user)
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -242,12 +374,28 @@ function App() {
       <nav className="tabs" aria-label="Sales summary sections">
         <button className={view === 'record' ? 'tab active' : 'tab'} onClick={() => setView('record')}><ArrowDownLeft size={15} />Record sales</button>
         <button className={view === 'history' ? 'tab active' : 'tab'} onClick={() => setView('history')}><ClipboardList size={15} />Past Sundays <span className="tab-count">{summaries.length}</span></button>
+        {profile.role === 'admin' && <button className={view === 'requests' ? 'tab active' : 'tab'} onClick={() => setView('requests')}><ShieldCheck size={15} />Approvals <span className="tab-count">{requests.length}</span></button>}
       </nav>
 
       {error && <div className="global-message"><ErrorNotice>{error}</ErrorNotice><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
       {notice && <div className="global-message"><div className="notice notice-success" role="status"><BadgeCheck size={16} />{notice}</div><button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
 
-      {view === 'record' ? (
+      {view === 'requests' && profile.role === 'admin' ? (
+        <Card className="requests-card">
+          <CardHeader className="history-header"><div><CardTitle>Signup requests</CardTitle><p>Approve confirmed cashier accounts before they can access sales.</p></div><Button variant="outline" size="sm" onClick={refreshRequests} disabled={requestsLoading}>{requestsLoading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}Refresh</Button></CardHeader>
+          {requestsLoading ? <div className="history-loading"><LoaderCircle className="spin" size={18} />Loading requests…</div> : requests.length === 0 ? <div className="empty-state"><div className="empty-icon"><BadgeCheck size={21} /></div><h3>No pending requests</h3><p>New requests appear here after the cashier confirms their email.</p></div> : (
+            <div className="request-list">
+              {requests.map((request) => (
+                <div className="request-row" key={request.id}>
+                  <span className="request-avatar">{(request.display_name || request.email).slice(0, 1).toUpperCase()}</span>
+                  <div className="request-info"><strong>{request.display_name || request.email}</strong><span>{request.email}</span><small>Requested {request.requested_at ? new Intl.DateTimeFormat('en-UG', { dateStyle: 'medium' }).format(new Date(request.requested_at)) : 'recently'}</small></div>
+                  <div className="request-actions"><Button size="sm" onClick={() => reviewRequest(request.id, 'approved')} disabled={reviewingId !== ''}>{reviewingId === request.id ? <LoaderCircle className="spin" size={14} /> : <BadgeCheck size={14} />}Approve</Button><Button size="sm" variant="outline" onClick={() => reviewRequest(request.id, 'rejected')} disabled={reviewingId !== ''}>Decline</Button></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      ) : view === 'record' ? (
         <div className="main-grid">
           <Card className="entry-card">
             <CardHeader className="entry-header"><div><CardTitle>Enter Sunday’s figures</CardTitle><p>Enter amounts in Ugandan shillings.</p></div>{selectedSummary && <Badge>Saved</Badge>}</CardHeader>
