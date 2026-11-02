@@ -2,9 +2,10 @@ import { jsPDF } from 'jspdf'
 import { formatMoney, formatSunday, type SalesDraft } from './sales'
 
 export function downloadSalesSummaryPdf(summary: SalesDraft, cashier: string, isSaved = false) {
-  const pdf = new jsPDF({ format: 'a4', unit: 'mm' })
+  // Keep the full document page narrow for a compact, receipt-like report.
+  const pdf = new jsPDF({ format: [148, 297], unit: 'mm' })
   const pageWidth = pdf.internal.pageSize.getWidth()
-  const contentWidth = 132
+  const contentWidth = pageWidth - 28
   const contentX = (pageWidth - contentWidth) / 2
   const contentRight = contentX + contentWidth
   const worked = summary.mtn_amount + summary.airtel_amount + summary.cash_deposited
